@@ -36,24 +36,15 @@ int clientQuantity = 0;
 int operations = 0;
 
 void initServerSocket(int *serverSocket, int port);
-
 void initServerSocketWithRandomPort(int *serverSocket);
-
 void *asyncTask(void *args);
-
 int execClientCommand(const int socket, struct sockaddr_in *clientInfo, const struct Message *msg, char *errorString);
-
 int parseCmd(struct Message *msg, char *errorString);
-
 int validateCommand(const struct Message msg, char *errorString);
-
 int parking(const int socket, struct sockaddr_in *client, char *licName, char *errorString);
-
 int quit_client(const int socket, struct sockaddr_in *client, char *errorString);
-
 int release_client(const int socket, struct sockaddr_in *client, char *errorString);
-
-void *clientTimer(void *args);
+int payment(const int socket, struct sockaddr_in *client, int amount, char *errorString);
 
 
 int main(int argc, char **argv) {
@@ -91,25 +82,6 @@ int main(int argc, char **argv) {
             continue;
         }
 
-//        pthread_mutex_lock(&mutex);
-//        int exi = 0;
-//        if (clientQuantity < 0) {
-//            for (int i = 0; i < clientQuantity; i++) {
-//                if (clients[i].port == connectInfo.sin_port) {
-//                    exi = 1;
-//                    printf("CLIENT FOUND\n");
-//                }
-//            }
-//        }
-//
-//        if (!exi) {
-//            printf("CLIENT NOT FOUND\n");
-//            clients[clientQuantity].number = clientQuantity;
-//            clients[clientQuantity].port = connectInfo.sin_port;
-//            clients[clientQuantity].cond = 0;
-//            clientQuantity++;
-//        }
-//        pthread_mutex_unlock(&mutex);
 
 //        bzero(buf, 100);
 //        fgets(buf, 100, stdin);
@@ -266,31 +238,6 @@ void *asyncTask(void *args) {
 //        return;
     }
 
-//    printf("11\n");
-//    pthread_mutex_lock(&mutex);
-//    int exi = 0;
-//    if (clientQuantity < 0) {
-//        for (int i = 0; i < clientQuantity; i++) {
-//            if (clients[i].port == clientInfo.sin_port) {
-//                exi = 1;
-//            }
-//        }
-//    }
-//
-////    printf("12\n");
-//
-//    if (!exi) {
-//        clients[clientQuantity].number = clientQuantity;
-//        clients[clientQuantity].port = clientInfo.sin_port;
-//        clients[clientQuantity].cond = 0;
-//        if (pthread_create(&(clients[clientQuantity].timerThd), NULL, clientTimer, (void *) &clientQuantity)) {
-//            printf("ERROR: Can't create timer thread for client!\n");
-//            fflush(stdout);
-//        } else printf("Created timer thread\n");
-//        clientQuantity++;
-//    }
-//    pthread_mutex_unlock(&mutex);
-//    printf("22\n");
 
     char errorString[SIZE_PACK_DATA] = {0};
     if (execClientCommand(tempSocket, &clientInfo, &msg, errorString) == -1) {
@@ -322,8 +269,6 @@ int execClientCommand(const int socket, struct sockaddr_in *clientInfo, const st
         return -1;
     }
 
-//    printf("31\n");
-
     if (validateCommand(*msg, errorString) == -1) {
         fprintf(stdout, "Команда клиента: %s - неккоретна!\nОписание ошибки: %s\n", msg->data, errorString);
         return -1;
@@ -331,7 +276,7 @@ int execClientCommand(const int socket, struct sockaddr_in *clientInfo, const st
 
     fprintf(stdout, "Команда клиента: %s - корректна.\n", msg->data);
 
-
+        //TODO передача аргументов в команды
     if (!strcmp(msg->argv[0], "/park")) {
         fprintf(stdout, "Exec park %s\n", msg->data);
         return parking(socket, clientInfo, msg->argv[1], errorString);
@@ -340,7 +285,7 @@ int execClientCommand(const int socket, struct sockaddr_in *clientInfo, const st
         return release_client(socket, clientInfo, errorString);
     } else if (!strcmp(msg->argv[0], "/pay")) {
         fprintf(stdout, "Exec pay %s\n", msg->data);
-//        return readFile(socket, clientInfo, msg->argv[1], errorString);
+        return payment(socket, clientInfo, atoi(msg->argv[1]), errorString);
     } else if (!strcmp(msg->argv[0], "/quit")) {
         fprintf(stdout, "Exec quit %s\n", msg->data);
         return quit_client(socket, clientInfo, errorString);
@@ -380,6 +325,10 @@ int parseCmd(struct Message *msg, char *errorString) {
     }
 
     msg->argc = countArg;
+
+    for (int i = 0; i <= msg->argc; i++) {
+        printf("PARSER: %s\n", msg->argv[i]);
+    }
 
     return 1;
 }
@@ -429,7 +378,6 @@ int parking(const int socket, struct sockaddr_in *client, char *licName, char *e
 
     for (int i = 0; i < clientQuantity; i++) {
         if (!strcmp(clients[i].lic, licName) || clients[i].port == client->sin_port) {
-
             printf("CLIENT FOUND\n");
             if (safeSendMsg(socket, *client, CODE_PARK, "USER_ALREADY_EXISTS", strlen("USER_ALREADY_EXISTS")) < 0) {
                 fprintf(stdout, "code load error");
@@ -438,7 +386,6 @@ int parking(const int socket, struct sockaddr_in *client, char *licName, char *e
             return 1;
         }
     }
-
 
     printf("CLIENT NOT FOUND\n");
     clients[clientQuantity].number = clientQuantity;
@@ -453,17 +400,10 @@ int parking(const int socket, struct sockaddr_in *client, char *licName, char *e
 
     pthread_mutex_unlock(&mutex);
 
-//    for (int i = 0; i < clientQuantity; i++) {
-//        if (clients[i].port == client->sin_port) {
-//            strcpy(clients[i].lic, licName);
-//            clients[i].cond = 1;
-//            printf("Client %d cond = %d\n", i, clients[i].cond);
-//            time(&clients[i].start);
-//            printf("Client %d start time = %ld\n", i, clients[i].start);
-//        }
-//    }
+    char msg[100] = {0};
+    sprintf(msg, "PARK OK\nYOUR LIC: %s", clients[clientQuantity].lic);
 
-    if (safeSendMsg(socket, *client, CODE_PARK, "PARK_OK", strlen("PARK_OK")) < 0) {
+    if (safeSendMsg(socket, *client, CODE_PARK, msg, sizeof(msg)) < 0) {
         fprintf(stdout, "code load error");
         return -1;
     }
@@ -471,7 +411,8 @@ int parking(const int socket, struct sockaddr_in *client, char *licName, char *e
 }
 
 int release_client(const int socket, struct sockaddr_in *client, char *errorString) {
-    double total_time = 0;
+    int total_time = 0;
+    int index = 0;
     for (int i = 0; i < clientQuantity; i++) {
         if (clients[i].port == client->sin_port) {
 
@@ -479,17 +420,60 @@ int release_client(const int socket, struct sockaddr_in *client, char *errorStri
             printf("Client %d cond = %d\n", i, clients[i].cond);
             time(&clients[i].end);
             printf("Client %d end time = %ld\n", i, clients[i].end);
-            total_time = (double) (clients[i].end - clients[i].start);
+            total_time = (int) (clients[i].end - clients[i].start);
+            clients[i].debt = total_time * 2;
+            index = i;
         }
     }
 
     char msg[100] = {0};
-    sprintf(msg, "TIME: %.2f", total_time);
+    sprintf(msg, "YOUR TIME: %d", total_time);
+
 
     if (safeSendMsg(socket, *client, CODE_RELEASE, msg, sizeof(msg)) < 0) {
         fprintf(stdout, "code load error");
         return -1;
     }
+    sprintf(msg, "YOUR DEBT: %d$", clients[index].debt);
+    if (safeSendMsg(socket, *client, CODE_RELEASE, msg, sizeof(msg)) < 0) {
+        fprintf(stdout, "code load error");
+        return -1;
+    }
+    return 1;
+}
+
+int payment(const int socket, struct sockaddr_in *client, int amount, char *errorString) {
+    char msg[100] = {0};
+    int cash;
+    int index = 0;
+//    printf("RECEIVED AMOUNT %s$\n", amount);
+    printf("RECEIVED PAYMENT %d$\n", amount);
+    for (int i = 0; i < clientQuantity; i++) {
+        if (clients[i].port == client->sin_port) {
+
+            index = i;
+            clients[i].debt -= amount;
+            if (clients[i].debt == 0) {
+                printf("Client %d payed off, his soul is free..\n", i);
+                clients[i].cond = 3;
+            } else if (clients[i].debt < 0) {
+                cash = -clients[i].debt;
+                printf("Client %d payed well, but %d$ more than he had to.\n", i, cash);
+                clients[i].cond = 3;
+            } else {
+                printf("Client %d has to pay %d$ more.\n", i, clients[i].debt);
+            }
+
+        }
+    }
+
+    sprintf(msg, "YOUR CURRENT DEBT: %d$", clients[index].debt);
+
+    if (safeSendMsg(socket, *client, CODE_PAY, msg, sizeof(msg)) < 0) {
+        fprintf(stdout, "code load error");
+        return -1;
+    }
+
     return 1;
 }
 
@@ -514,187 +498,3 @@ int quit_client(const int socket, struct sockaddr_in *client, char *errorString)
     }
     return 1;
 }
-
-
-
-
-
-//int sendListFilesInDir(const int socket, struct sockaddr_in *clientInfo, const char *path, char *errorString) {
-//    bzero(errorString, sizeof(errorString));
-//
-//    char fullPath[SIZE_MSG * 2] = { 0 };
-//    catWithRootDir(fullPath, path);
-//
-//    DIR *dir = opendir(fullPath);
-//    if (dir == NULL) {
-//        fprintf(stdout,"Не смог открыть директорию - %s\n", path);
-//        sprintf(errorString, "Не удалось получить список файлов из директории - %s. Возможно она не существует.\n", path);
-//        return -1;
-//    }
-//
-//    struct dirent *dirent;
-//    while ((dirent = readdir(dir)) != NULL) {
-//        if (dirent->d_name[0] == '.') {
-//            continue;
-//        }
-//
-//        if (safeSendMsg(socket, *clientInfo, CODE_INFO, dirent->d_name, strlen(dirent->d_name)) == -1) {
-//            fprintf(stdout,"Проблема с отправкой имени файла из директории - %s\n", path);
-//            sprintf(errorString, "Не получилось отправить навзание файла из директории - %s", path);
-//            return -1;
-//        }
-//    }
-//
-//    if (closedir(dir) == -1) {
-//        fprintf(stdout,"Беда! Не могу закрыть директорию - %s\n", path);
-//        sprintf(errorString, "Проблемы с директорией! - %s", path);
-//        return -1;
-//    }
-//
-//    return 1;
-//}
-
-//int changeClientDir(const int socket, struct sockaddr_in *clientInfo, const char *path, char *errorString) {
-//
-//    fprintf(stdout,"Целевая директория - %s\n", path);
-//
-//    char fullPath[SIZE_MSG * 2] = { 0 };
-//    catWithRootDir(fullPath, path);
-//
-//    fprintf(stdout,"Полный путь - %s\n", fullPath);
-//
-//    if(isWho(fullPath) != 2){
-//        sprintf(errorString, "%s - это не каталог! Или такого каталога не существует.", path);
-//        return -1;
-//    }
-//
-//    if (safeSendMsg(socket, *clientInfo, CODE_QUIT, path, strlen(path)) < 0) {
-//        fprintf(stdout,"Не смогли отправить путь.\n");
-//    }
-//
-//    return 1;
-//}
-
-/**
-Проверяет, что находится по данному пути файл или папка.
-Вхоные значения:
-    char *path - путь к каталогу.
-Возвращаемое значение:
-    1 если это файл, 2 если это папка или -1 если что-то не так.
-*/
-//int isWho(char *path){
-//    struct stat statBuf;
-//    if(stat(path, &statBuf) == -1){
-//        return -1;
-//    }
-//    if(S_ISREG(statBuf.st_mode)){
-//        return 1;
-//    }else if(S_ISDIR(statBuf.st_mode)){
-//        return 2;
-//    }else if(S_ISLNK(statBuf.st_mode)){
-//        return 1;
-//    } else {
-//        return -1;
-//    }
-//}
-
-
-//Путь пользователя на сервере + имя файла
-//int readFile(const int socket, struct sockaddr_in *clientInfo, const char *fileName, char *errorString) {
-//
-//    if (safeSendMsg(socket, *clientInfo, CODE_RELEASE, "Д", 1) < 0) {
-//        fprintf(stdout,"code load error");
-//        return -1;
-//    }
-//
-//    char fullPath[SIZE_MSG * 2] = { 0 };
-//    catWithRootDir(fullPath, fileName);
-//
-//    FILE *file = fopen(fullPath, "wb");
-//    if (file == NULL) {
-//        fprintf(stdout,"Не удалось открыть файл: %s - для записи!\n", fileName);
-//        sprintf(errorString, "Не удалось загрузить файл - %s.", fileName);
-//        return -1;
-//    }
-//
-//    int err;
-//    struct Message msg;
-//    for(;;){
-//        err = safeReadMsg(socket, clientInfo, &msg);
-//        if(err == -1){
-//            fprintf(stdout,"Не удалось принять кусок файла - %s. Данные не были сохранены.\n", fileName);
-//            sprintf(errorString, "Не удалось загрузить файл - %s.", fileName);
-//            fclose(file);
-//            remove(fileName);
-//            return -1;
-//        }
-//
-//        if (msg.type == CODE_FILE) {
-//            fprintf(stdout,"Пишу байт - %d\n", msg.length);
-//            fwrite(msg.data, sizeof(char), msg.length, file);
-//        } else if (msg.type == CODE_OK) {
-//            fprintf(stdout,"Файл принят.\n");
-//            break;
-//        } else {
-//            fprintf(stdout,"Пришло неправильное сообщение с кодом - %d.\n", msg.type);
-//            sprintf(errorString, "Не удалось загрузить файл - %s.", fileName);
-//            fclose(file);
-//            remove(fileName);
-//            return -1;
-//        }
-//    }
-//
-//    fclose(file);
-//
-//    return 1;
-//}
-
-//Путь пользователя на сервере + имя файла
-//int sendFile(const int socket, struct sockaddr_in *clientInfo, const char *fileName, char *errorString) {
-//
-//    if (safeSendMsg(socket, *clientInfo, CODE_PAY, "Д", 1) < 0) {
-//        fprintf(stdout,"code dload error");
-//        return -1;
-//    }
-//
-//    char fullPath[SIZE_MSG * 2] = { 0 };
-//    catWithRootDir(fullPath, fileName);
-//
-//    fprintf(stdout,"Полный путь отправка - %s\n", fullPath);
-//
-//    if (isWho(fullPath) != 1) {
-//        sprintf(errorString, "%s - это не файл!", fileName);
-//        return -1;
-//    }
-//
-//    //КАЖИСЬ НАДО ЕЩЕ ОТПРАВЛЯТЬ ЗАПРОС НА ТО ЧТ ОЯ ХОЧУ ОТПРАВИТЬ
-//
-//    FILE *file = fopen(fullPath, "rb");
-//    if (file == NULL) {
-//        fprintf(stdout,"Не удалось открыть файл: %s - для записи!\n", fileName);
-//        sprintf(errorString, "Не удалось отправить файл - %s.", fileName);
-//        return -1;
-//    }
-//
-//    // FILE *fileTest = fopen("test", "wb");
-//
-//    char section[SIZE_MSG] = {'\0'};
-//    int res = 0, err;
-//    while ((res = fread(section, sizeof(char), sizeof(section), file)) != 0) {
-//        // fwrite(section, sizeof(char), res, fileTest);
-//        err = safeSendMsg(socket, *clientInfo, CODE_FILE, section, res);
-//        fprintf(stderr, "res - %d\n", res);
-//        if (err == -1) {
-//            fprintf(stdout,"Не удалось отправить кусок файла - %s\n", fileName);
-//            sprintf(errorString, "Не удалось отправить файл - %s\n", fileName);
-//            fclose(file);
-//            return -1;
-//        }
-//        bzero(section, sizeof(section));
-//    }
-//
-//    fclose(file);
-//    // fclose(fileTest);
-//
-//    return 1;
-//}

@@ -3,4 +3,4 @@ project(lexa_udp C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_executable(lexa_udp client.c declaration.h server.c dexchange.h logger.h)
+add_executable(lexa_udp client.c declaration.h server.c dexchange.h)

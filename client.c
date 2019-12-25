@@ -155,6 +155,11 @@ void execCommand(const int sock, struct sockaddr_in *serverInfo) {
             break;
         } else if (code == CODE_RELEASE) {
             fprintf(stdout, "%s\n", msg.data);
+            if (safeReadMsg(sock, serverInfo, &msg) < 0) {
+                fprintf(stdout, "Проблемы с получением ответа от сервера! Попробуйте еще раз.\n");
+                return;
+            }
+            fprintf(stdout, "%s\n", msg.data);
             break;
         } else if (code == CODE_PAY) {
             fprintf(stdout, "%s\n", msg.data);
