@@ -14,13 +14,6 @@
 #include "declaration.h"
 #include "dexchange.h"
 
-//struct Path {
-//    int argc;
-//    char dirs[MAX_QUANTITY_ARGS_CMD][SIZE_ARG];
-//    char pathLine[SIZE_MSG];
-//} workDir;
-
-//struct Path tempPath;
 
 struct sockaddr_in serverInfo;
 char preDir[SIZE_MSG];

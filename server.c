@@ -24,7 +24,7 @@ struct tInfo {
     int number;
     int time;
     time_t start, end;
-    int cond; // cond == 1 -> is parked; 0 -> new client, 2 -> leave request, 3 -> payed off, able to quit
+    int cond; // cond == 1 -> is parked; 0 -> new client, 2 -> leave request, 3 -> payed off, able to quit, 4 -> kick
 } clients[5];
 
 struct payLog {
@@ -60,8 +60,6 @@ int quit_client(const int socket, struct sockaddr_in *client, char *errorString)
 int release_client(const int socket, struct sockaddr_in *client, char *errorString);
 
 int payment(const int socket, struct sockaddr_in *client, int amount, char *errorString);
-
-int kickClient(const int socket, struct sockaddr_in *client);
 
 void *commando(void *args);
 
@@ -161,7 +159,7 @@ void *commando(void *args) {
             printf("N TIME LIC\n");
 
             for (int i = 0; i < clientQuantity; i++) {
-                if (clients[i].port != 0) {
+                if (clients[i].port != 0 && clients[i].cond != 4) {
                     if (clients[i].cond < 2) {
                         time(&clients[i].end);
                         total_time = (int) (clients[i].end - clients[i].start);
@@ -174,6 +172,14 @@ void *commando(void *args) {
             }
 
             fflush(stdout);
+        } else if (!strcmp("/log", buf)) {
+            int sum = 0;
+            for (int i = 0; i < operations; i++) {
+                printf("Client %d payed %d$ and gained %d$ back\n",
+                       pLog[i].client, pLog[i].payment, pLog[i].change);
+                sum += pLog[i].payment - pLog[i].change;
+            }
+            printf("Total profit: %d$\n", sum);
         } else {
             char *sep = " ";
             char *str = strtok(buf, sep);
@@ -193,6 +199,15 @@ void *commando(void *args) {
                         continue;
                     }
                     printf("Ща попробуем кикнуть %d-го клиента\n", kickNum);
+                    for (int i = 0; i < clientQuantity; i++) {
+                        if (clients[i].port != 0 && clients[i].number == kickNum) {
+                            printf("Ага, попався!\n");
+                            clients[i].cond = 4;
+                        } else {
+                            printf("А тут и нет такого..\n");
+                        }
+                        fflush(stdout);
+                    }
                 }
             }
         }
@@ -328,6 +343,17 @@ void *asyncTask(void *args) {
 int execClientCommand(const int socket, struct sockaddr_in *clientInfo, struct Message *msg, char *errorString) {
     bzero(errorString, sizeof(errorString));
 
+    for (int i = 0; i < clientQuantity; i++) {
+        if (clients[i].port == clientInfo->sin_port && clients[i].cond == 4) {
+            if (safeSendMsg(socket, *clientInfo, CODE_QUIT, "FORCE_QUIT", strlen("FORCE_QUIT")) < 0) {
+                fprintf(stdout, "code load error");
+                return -1;
+            }
+            fflush(stdout);
+            return 1;
+        }
+    }
+
     if (parseCmd(msg, errorString) == -1) {
         fprintf(stdout, "Не удалось распарсить команду клиента: %s\nОписание ошибки: %s\n", msg->data, errorString);
         return -1;
@@ -404,29 +430,29 @@ int validateCommand(const struct Message msg, char *errorString) {
 
     if (!strcmp(firstArg, "/park")) {
         if (argc != 2) {
-            sprintf(errorString, "Команда: %s - имеет лишние аргументы. Воспользуейтесь командой: help\n", msg.data);
+            sprintf(errorString, "Команда: %s - имеет лишние аргументы. Воспользуейтесь командой: /help\n", msg.data);
             return -1;
         }
     } else if (!strcmp(firstArg, "/release")) {
         if (argc > 1) {
-            sprintf(errorString, "Команда: %s - имеет много или мало аргументов. Воспользуейтесь командой: help\n",
+            sprintf(errorString, "Команда: %s - имеет много или мало аргументов. Воспользуейтесь командой: /help\n",
                     msg.data);
             return -1;
         }
     } else if (!strcmp(firstArg, "/pay")) {
         if (argc != 2) {
-            sprintf(errorString, "Команда: %s - имеет много или мало аргументов. Воспользуейтесь командой: help\n",
+            sprintf(errorString, "Команда: %s - имеет много или мало аргументов. Воспользуейтесь командой: /help\n",
                     msg.data);
             return -1;
         }
     } else if (!strcmp(firstArg, "/quit")) {
         if (argc > 1) {
-            sprintf(errorString, "Команда: %s - имеет много аргументов. Воспользуейтесь командой: help\n",
+            sprintf(errorString, "Команда: %s - имеет много аргументов. Воспользуейтесь командой: /help\n",
                     msg.data);
             return -1;
         }
     } else {
-        sprintf(errorString, "Неизвстная команда: %s. Воспользуейтесь командой: help\n", cmdLine);
+        sprintf(errorString, "Неизвстная команда: %s. Воспользуейтесь командой: /help\n", cmdLine);
         return -1;
     }
 
@@ -480,44 +506,106 @@ int parking(const int socket, struct sockaddr_in *client, char *licName, char *e
 int release_client(const int socket, struct sockaddr_in *client, char *errorString) {
     int total_time = 0;
     int index = 0;
+    char msg[100] = {0};
     for (int i = 0; i < clientQuantity; i++) {
         if (clients[i].port == client->sin_port) {
+            switch (clients[i].cond) {
+                case 1:{
+                    clients[i].cond = 2;
+                    time(&clients[i].end);
+                    total_time = (int) (clients[i].end - clients[i].start);
+                    clients[i].time = total_time;
+                    clients[i].debt = total_time * 2;
+                    index = i;
+                    sprintf(msg, "YOUR TIME: %d", total_time);
+                    if (safeSendMsg(socket, *client, CODE_RELEASE, msg, sizeof(msg)) < 0) {
+                        fprintf(stdout, "code load error");
+                        return -1;
+                    }
+                    sprintf(msg, "YOUR DEBT: %d$", clients[index].debt);
+                    if (safeSendMsg(socket, *client, CODE_RELEASE, msg, sizeof(msg)) < 0) {
+                        fprintf(stdout, "code load error");
+                        return -1;
+                    }
 
-            clients[i].cond = 2;
-            printf("Client %d cond = %d\n", i, clients[i].cond);
-            time(&clients[i].end);
-            printf("Client %d end time = %ld\n", i, clients[i].end);
-            total_time = (int) (clients[i].end - clients[i].start);
-            clients[i].time = total_time;
-            clients[i].debt = total_time * 2;
-            index = i;
+                    break;
+                }
+
+                case 2:{
+                    if (safeSendMsg(socket, *client, CODE_RELEASE, "You already sent release request",
+                            strlen("You already sent release request")) < 0) {
+                        fprintf(stdout, "code load error");
+                        return -1;
+                    }
+                    if (safeSendMsg(socket, *client, CODE_RELEASE, "Now you can /pay NUM to pay your debt",
+                            strlen("Now you can /pay NUM to pay your debt")) < 0) {
+                        fprintf(stdout, "code load error");
+                        return -1;
+                    }
+                    break;
+                }
+
+                case 3:{
+                    if (safeSendMsg(socket, *client, CODE_RELEASE, "You need to park your car first",
+                                    strlen("You need to park your car first")) < 0) {
+                        fprintf(stdout, "code load error");
+                        return -1;
+                    }
+                    if (safeSendMsg(socket, *client, CODE_RELEASE, "Use /park LICENSE",
+                                    strlen("Use /park LICENSE")) < 0) {
+                        fprintf(stdout, "code load error");
+                        return -1;
+                    }
+                    break;
+                }
+
+                case 0:{
+                    if (safeSendMsg(socket, *client, CODE_RELEASE, "You need to park your car first",
+                                    strlen("You need to park your car first")) < 0) {
+                        fprintf(stdout, "code load error");
+                        return -1;
+                    }
+                    if (safeSendMsg(socket, *client, CODE_RELEASE, "Use /park LICENSE",
+                                    strlen("Use /park LICENSE")) < 0) {
+                        fprintf(stdout, "code load error");
+                        return -1;
+                    }
+                    break;
+                }
+
+                default: {
+                    break;
+                }
+
+            }
+
+
+
         }
     }
 
-    char msg[100] = {0};
-    sprintf(msg, "YOUR TIME: %d", total_time);
-
-
-    if (safeSendMsg(socket, *client, CODE_RELEASE, msg, sizeof(msg)) < 0) {
-        fprintf(stdout, "code load error");
-        return -1;
-    }
-    sprintf(msg, "YOUR DEBT: %d$", clients[index].debt);
-    if (safeSendMsg(socket, *client, CODE_RELEASE, msg, sizeof(msg)) < 0) {
-        fprintf(stdout, "code load error");
-        return -1;
-    }
+//    char msg[100] = {0};
+//    sprintf(msg, "YOUR TIME: %d", total_time);
+//    if (safeSendMsg(socket, *client, CODE_RELEASE, msg, sizeof(msg)) < 0) {
+//        fprintf(stdout, "code load error");
+//        return -1;
+//    }
+//    sprintf(msg, "YOUR DEBT: %d$", clients[index].debt);
+//    if (safeSendMsg(socket, *client, CODE_RELEASE, msg, sizeof(msg)) < 0) {
+//        fprintf(stdout, "code load error");
+//        return -1;
+//    }
     return 1;
 }
 
 int payment(const int socket, struct sockaddr_in *client, int amount, char *errorString) {
     char msg[100] = {0};
-    int cash;
+    int cash = 0;
+
 
     printf("RECEIVED PAYMENT %d$\n", amount);
     for (int i = 0; i < clientQuantity; i++) {
         if (clients[i].port == client->sin_port) {
-
             clients[i].debt -= amount;
             if (clients[i].debt == 0) {
                 printf("Client %d payed off, his soul is free..\n", i);
@@ -533,9 +621,15 @@ int payment(const int socket, struct sockaddr_in *client, int amount, char *erro
                 printf("Client %d has to pay %d$ more.\n", i, clients[i].debt);
                 sprintf(msg, "You have to pay: %d$", clients[i].debt);
             }
-
+            pLog = (struct payLog *) realloc(pLog, sizeof(struct payLog) * (operations + 1));
+            pLog[operations].client = i;
+            pLog[operations].payment = amount;
+            pLog[operations].change = cash;
+            operations++;
         }
     }
+
+
 
     if (safeSendMsg(socket, *client, CODE_PAY, msg, sizeof(msg)) < 0) {
         fprintf(stdout, "code load error");
@@ -571,18 +665,4 @@ int quit_client(const int socket, struct sockaddr_in *client, char *errorString)
 
 }
 
-int kickClient(const int socket, struct sockaddr_in *client) {
 
-    for (int i = 0; i < clientQuantity; i++) {
-        if (clients[i].port == client->sin_port) {
-            if (safeSendMsg(socket, *client, CODE_QUIT, "FORCE_QUIT", strlen("QUIT_OK")) < 0) {
-                fprintf(stdout, "code load error");
-                return -1;
-            }
-            clients[i].port = 0;
-
-            break;
-        }
-    }
-    return 1;
-}
