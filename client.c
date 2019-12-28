@@ -72,6 +72,7 @@ int main(int argc, char **argv) {
     struct sockaddr_in tempServerInfo;
     struct Message msg;
     char inputBuf[SIZE_MSG];
+    char input_copy[SIZE_MSG];
     for (;;) {
 
 
@@ -85,8 +86,9 @@ int main(int argc, char **argv) {
             break;
         }
 
+        strcpy(input_copy, inputBuf);
         char *sep = " ";
-        char *arg = strtok(inputBuf, sep);
+        char *arg = strtok(input_copy, sep);
 
         if (arg == NULL) {
             fprintf(stdout, "Дичь! Попробуйте еще раз.\n");

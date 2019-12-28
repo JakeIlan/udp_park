@@ -22,6 +22,7 @@ struct tInfo {
     char lic[10];
     int debt;
     int number;
+    int time;
     time_t start, end;
     int cond; // cond == 1 -> is parked; 0 -> new client, 2 -> leave request, 3 -> payed off, able to quit
 } clients[5];
@@ -32,19 +33,37 @@ struct payLog {
     int change;
 } *pLog;
 
+pthread_t commander;
+pthread_t *workers;
+int quantityWorkers = 0;
+int serverSocket = -1;
+
 int clientQuantity = 0;
 int operations = 0;
 
 void initServerSocket(int *serverSocket, int port);
+
 void initServerSocketWithRandomPort(int *serverSocket);
+
 void *asyncTask(void *args);
-int execClientCommand(const int socket, struct sockaddr_in *clientInfo, const struct Message *msg, char *errorString);
+
+int execClientCommand(const int socket, struct sockaddr_in *clientInfo, struct Message *msg, char *errorString);
+
 int parseCmd(struct Message *msg, char *errorString);
+
 int validateCommand(const struct Message msg, char *errorString);
+
 int parking(const int socket, struct sockaddr_in *client, char *licName, char *errorString);
+
 int quit_client(const int socket, struct sockaddr_in *client, char *errorString);
+
 int release_client(const int socket, struct sockaddr_in *client, char *errorString);
+
 int payment(const int socket, struct sockaddr_in *client, int amount, char *errorString);
+
+int kickClient(const int socket, struct sockaddr_in *client);
+
+void *commando(void *args);
 
 
 int main(int argc, char **argv) {
@@ -55,18 +74,18 @@ int main(int argc, char **argv) {
     }
 
     int port = atoi(argv[1]);
-//    rootDir = argv[2];
-    int serverSocket = -1;
+
     initServerSocket(&serverSocket, port);
 
-    pthread_t *workers;
-    int quantityWorkers = 0;
 
     struct sockaddr_in connectInfo;
     struct Message msg;
     printf("Input (/help to help): \n");
     fflush(stdout);
-    char buf[100];
+    if (pthread_create(&commander, NULL, commando, NULL)) {
+        fprintf(stdout, "%s\n", "Не удалось создать поток для обработки серверной консоли!");
+        exit(-1);
+    }
     for (;;) {//ПРИДУМАТЬ КАК ЗАВЕРШАТЬ РАБОТУ СЕРВЕРА (ГЛОБАЛЬНЫЙ ФЛАГ?)
 
 
@@ -81,28 +100,6 @@ int main(int argc, char **argv) {
             fprintf(stdout, "Получили какой-то не тот пакет в основном потоке. Нам нужен пакет с id = 1.\n");
             continue;
         }
-
-
-//        bzero(buf, 100);
-//        fgets(buf, 100, stdin);
-//        buf[strlen(buf) - 1] = '\0';
-//
-//        if (!strcmp("/quit", buf) || !strcmp("/q", buf)) {
-//            fprintf(stdout, "Получена команда отключения, вырубаемся..\n");
-//            break;
-//        } else if (!strcmp("/lc", buf)) {
-//            printf("Clients on-line:\n");
-//            printf("N TIME LIC\n");
-//
-////        pthread_mutex_lock(&mutex);
-//            for (int i = 0; i < clientQuantity; i++) {
-//                clients[i].time -= time(NULL);
-//                printf("%d %ld %s\n", clients[i].number, clients[i].time, clients[i].lic);
-//            }
-////        pthread_mutex_unlock(&mutex);
-//
-//            fflush(stdout);
-//        }
 
         /*
         Каждый раз при получении команды создается новый поток для ее обработки. После обработки этой
@@ -135,6 +132,73 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+
+void *commando(void *args) {
+    char buf[100];
+
+    int total_time;
+
+    for (;;) {
+
+        bzero(buf, 100);
+        fgets(buf, 100, stdin);
+        buf[strlen(buf) - 1] = '\0';
+
+        if (!strcmp("/quit", buf) || !strcmp("/q", buf)) {
+            fprintf(stdout, "Получена команда отключения, вырубаемся..\n");
+            fprintf(stdout, "Ожидаем завершения работы воркеров.\n");
+            for (int i = 0; i < quantityWorkers; i++) {
+                pthread_join(workers[i], NULL);
+            }
+
+            close(serverSocket);
+            free(workers);
+
+            fprintf(stdout, "%s\n", "Сервер завершил работу.");
+            exit(1);
+        } else if (!strcmp("/lc", buf)) {
+            printf("Clients on-line:\n");
+            printf("N TIME LIC\n");
+
+            for (int i = 0; i < clientQuantity; i++) {
+                if (clients[i].port != 0) {
+                    if (clients[i].cond < 2) {
+                        time(&clients[i].end);
+                        total_time = (int) (clients[i].end - clients[i].start);
+                        clients[i].time = total_time;
+                    }
+
+                    printf("%d  %d   %s\n", clients[i].number, clients[i].time, clients[i].lic);
+                }
+
+            }
+
+            fflush(stdout);
+        } else {
+            char *sep = " ";
+            char *str = strtok(buf, sep);
+            if (str == NULL) {
+                printf("Illegal format!\n");
+                fflush(stdout);
+                continue;
+            }
+            if (!strcmp("/kick", str)) {
+                str = strtok(NULL, sep);
+                if (str != NULL) {
+                    int kickNum = atoi(str);
+
+                    if (str[0] != '0' && kickNum == 0) {
+                        printf("Illegal format! Use /kick NUMBER.\n");
+                        fflush(stdout);
+                        continue;
+                    }
+                    printf("Ща попробуем кикнуть %d-го клиента\n", kickNum);
+                }
+            }
+        }
+    }
+
+}
 
 /**
 Инициализация UDP сокета. Если произойдет какая-то ошибка, то программа будет
@@ -261,7 +325,7 @@ void *asyncTask(void *args) {
     fprintf(stdout, "Команда обработана! Сокет закрыт, воркер завершил работу.\n");
 }
 
-int execClientCommand(const int socket, struct sockaddr_in *clientInfo, const struct Message *msg, char *errorString) {
+int execClientCommand(const int socket, struct sockaddr_in *clientInfo, struct Message *msg, char *errorString) {
     bzero(errorString, sizeof(errorString));
 
     if (parseCmd(msg, errorString) == -1) {
@@ -276,7 +340,7 @@ int execClientCommand(const int socket, struct sockaddr_in *clientInfo, const st
 
     fprintf(stdout, "Команда клиента: %s - корректна.\n", msg->data);
 
-        //TODO передача аргументов в команды
+
     if (!strcmp(msg->argv[0], "/park")) {
         fprintf(stdout, "Exec park %s\n", msg->data);
         return parking(socket, clientInfo, msg->argv[1], errorString);
@@ -303,8 +367,6 @@ int parseCmd(struct Message *msg, char *errorString) {
     int countArg = 0;
     char *sep = " ";
     char *arg = strtok(msg->data, sep);
-
-    fprintf(stdout, "Сари - %s\n", arg);
 
     if (arg == NULL) {
         sprintf(errorString, "Команда: %s - не поддается парсингу.\nВведите корректную команду. Используйте: help\n",
@@ -341,7 +403,7 @@ int validateCommand(const struct Message msg, char *errorString) {
     char *cmdLine = msg.data;
 
     if (!strcmp(firstArg, "/park")) {
-        if (argc != 1) {
+        if (argc != 2) {
             sprintf(errorString, "Команда: %s - имеет лишние аргументы. Воспользуейтесь командой: help\n", msg.data);
             return -1;
         }
@@ -352,7 +414,7 @@ int validateCommand(const struct Message msg, char *errorString) {
             return -1;
         }
     } else if (!strcmp(firstArg, "/pay")) {
-        if (argc != 1) {
+        if (argc != 2) {
             sprintf(errorString, "Команда: %s - имеет много или мало аргументов. Воспользуейтесь командой: help\n",
                     msg.data);
             return -1;
@@ -373,11 +435,11 @@ int validateCommand(const struct Message msg, char *errorString) {
 
 int parking(const int socket, struct sockaddr_in *client, char *licName, char *errorString) {
 
-    pthread_mutex_lock(&mutex);
+//    pthread_mutex_lock(&mutex);
 
 
     for (int i = 0; i < clientQuantity; i++) {
-        if (!strcmp(clients[i].lic, licName) || clients[i].port == client->sin_port) {
+        if (!strcmp(clients[i].lic, licName) && clients[i].port == client->sin_port) {
             printf("CLIENT FOUND\n");
             if (safeSendMsg(socket, *client, CODE_PARK, "USER_ALREADY_EXISTS", strlen("USER_ALREADY_EXISTS")) < 0) {
                 fprintf(stdout, "code load error");
@@ -391,22 +453,27 @@ int parking(const int socket, struct sockaddr_in *client, char *licName, char *e
     clients[clientQuantity].number = clientQuantity;
     clients[clientQuantity].port = client->sin_port;
     clients[clientQuantity].cond = 0;
+    clients[clientQuantity].time = 0;
     strcpy(clients[clientQuantity].lic, licName);
     clients[clientQuantity].cond = 1;
     printf("Client %d cond = %d\n", clientQuantity, clients[clientQuantity].cond);
     time(&clients[clientQuantity].start);
-    printf("Client %d start time = %ld\n", clientQuantity, clients[clientQuantity].start);
-    clientQuantity++;
+    printf("Client %d lic = %s\n", clientQuantity, clients[clientQuantity].lic);
 
-    pthread_mutex_unlock(&mutex);
+    char msg[SIZE_MSG] = {0};
 
-    char msg[100] = {0};
-    sprintf(msg, "PARK OK\nYOUR LIC: %s", clients[clientQuantity].lic);
+    snprintf(msg, sizeof(msg), "PARK OK\nYOUR LIC: %s", clients[clientQuantity].lic);
 
     if (safeSendMsg(socket, *client, CODE_PARK, msg, sizeof(msg)) < 0) {
         fprintf(stdout, "code load error");
         return -1;
     }
+
+    clientQuantity++;
+
+//    pthread_mutex_unlock(&mutex);
+
+
     return 1;
 }
 
@@ -421,6 +488,7 @@ int release_client(const int socket, struct sockaddr_in *client, char *errorStri
             time(&clients[i].end);
             printf("Client %d end time = %ld\n", i, clients[i].end);
             total_time = (int) (clients[i].end - clients[i].start);
+            clients[i].time = total_time;
             clients[i].debt = total_time * 2;
             index = i;
         }
@@ -445,29 +513,29 @@ int release_client(const int socket, struct sockaddr_in *client, char *errorStri
 int payment(const int socket, struct sockaddr_in *client, int amount, char *errorString) {
     char msg[100] = {0};
     int cash;
-    int index = 0;
-//    printf("RECEIVED AMOUNT %s$\n", amount);
+
     printf("RECEIVED PAYMENT %d$\n", amount);
     for (int i = 0; i < clientQuantity; i++) {
         if (clients[i].port == client->sin_port) {
 
-            index = i;
             clients[i].debt -= amount;
             if (clients[i].debt == 0) {
                 printf("Client %d payed off, his soul is free..\n", i);
                 clients[i].cond = 3;
+                sprintf(msg, "You have payed your debt.");
+
             } else if (clients[i].debt < 0) {
                 cash = -clients[i].debt;
                 printf("Client %d payed well, but %d$ more than he had to.\n", i, cash);
                 clients[i].cond = 3;
+                sprintf(msg, "You have payed your debt.\nIn fact, you paid %d$ more", cash);
             } else {
                 printf("Client %d has to pay %d$ more.\n", i, clients[i].debt);
+                sprintf(msg, "You have to pay: %d$", clients[i].debt);
             }
 
         }
     }
-
-    sprintf(msg, "YOUR CURRENT DEBT: %d$", clients[index].debt);
 
     if (safeSendMsg(socket, *client, CODE_PAY, msg, sizeof(msg)) < 0) {
         fprintf(stdout, "code load error");
@@ -488,13 +556,33 @@ int quit_client(const int socket, struct sockaddr_in *client, char *errorString)
                     fprintf(stdout, "code load error");
                     return -1;
                 }
-                return 1;
+
+            } else {
+                if (safeSendMsg(socket, *client, CODE_QUIT, "QUIT_OK", strlen("QUIT_OK")) < 0) {
+                    fprintf(stdout, "code load error");
+                    return -1;
+                }
+                clients[i].port = 0;
             }
         }
     }
-    if (safeSendMsg(socket, *client, CODE_QUIT, "QUIT_OK", strlen("QUIT_OK")) < 0) {
-        fprintf(stdout, "code load error");
-        return -1;
+
+    return 1;
+
+}
+
+int kickClient(const int socket, struct sockaddr_in *client) {
+
+    for (int i = 0; i < clientQuantity; i++) {
+        if (clients[i].port == client->sin_port) {
+            if (safeSendMsg(socket, *client, CODE_QUIT, "FORCE_QUIT", strlen("QUIT_OK")) < 0) {
+                fprintf(stdout, "code load error");
+                return -1;
+            }
+            clients[i].port = 0;
+
+            break;
+        }
     }
     return 1;
 }

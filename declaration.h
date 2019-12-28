@@ -7,8 +7,8 @@
 */
 #define SIZE_PACK 500
 #define SIZE_PACK_DATA 480
-#define SIZE_MSG 5000 //в linux длина пути и имени файла ограничена, тут даже с запасом хватит
-#define SIZE_ARG 255
+#define SIZE_MSG 2000
+#define SIZE_ARG 32
 #define SIZE_MY_STR 500
 #define MAX_QUANTITY_ARGS_CMD 3
 
